@@ -1,0 +1,46 @@
+name: tmp routing env ab
+on:
+  push:
+    branches: [tmp/flake-ci-routing-env]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: windows-latest-32-arm-core
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
+      - uses: ./.github/actions/setup-windows-build-deps
+      - uses: ./.github/actions/setup-pm
+        with:
+          packages: 'git,ripgrep'
+          extras: '["all", "telegram", "anthropic", "mistral", "fal", "modal", "daytona", "parallel-web"]'
+          test-environment: 'true'
+          save-tools-cache: 'false'
+          save-python-cache: 'false'
+      - name: Env A/B under 16 parallel copies
+        shell: bash
+        run: |
+          set -u
+          mkdir -p "$RUNNER_TEMP/probe"
+          declare -A fails total
+          for round in 1 2 3; do
+            for arm in base sysroot fullwin; do
+              pids=()
+              for i in $(seq 1 16); do
+                PROBE_ARM=$arm python -m pytest tests/ci/test_update_ci_routing.py -m "platforms and not integration" \
+                  -k "test_replay_rejects_ineffective_required_step or dispatches_its_suites" \
+                  -p no:cacheprovider -q --tb=line > "$RUNNER_TEMP/probe/$arm-r$round-$i.log" 2>&1 &
+                pids+=($!)
+              done
+              for idx in "${!pids[@]}"; do
+                total[$arm]=$(( ${total[$arm]:-0} + 1 ))
+                if ! wait "${pids[$idx]}"; then
+                  fails[$arm]=$(( ${fails[$arm]:-0} + 1 ))
+                  grep -a -o -E "replayed step exited [0-9]+ \(0x[0-9A-F]+\)" "$RUNNER_TEMP/probe/$arm-r$round-$((idx+1)).log" | sort | uniq -c | sed "s/^/  $arm: /"
+                fi
+              done
+              echo "round $round $arm: fails=${fails[$arm]:-0}/${total[$arm]}"
+            done
+          done
+          for arm in base sysroot fullwin; do echo "RESULT $arm fails=${fails[$arm]:-0}/${total[$arm]}"; done

@@ -74,6 +74,12 @@ def _run(step: dict, ctx: dict, cwd: Path | None = None, *, receipt: bool = Fals
             "REPLAY_PYTHON": sys.executable, "REPLAY_CALLS": str(calls),
             **{k: gha.to_string(gha.render(v, ctx)) for k, v in step.get("env", {}).items()},
         }
+        _arm = os.environ.get("PROBE_ARM", "base")
+        _keys = {"sysroot": ("SYSTEMROOT", "WINDIR"),
+                 "fullwin": ("SYSTEMROOT", "WINDIR", "SYSTEMDRIVE", "COMSPEC", "PATHEXT", "TEMP", "TMP",
+                             "PROCESSOR_ARCHITECTURE", "NUMBER_OF_PROCESSORS", "PROGRAMDATA", "ALLUSERSPROFILE",
+                             "USERPROFILE", "LOCALAPPDATA", "APPDATA", "PROGRAMFILES", "PROGRAMW6432")}.get(_arm, ())
+        env.update({k: v for k, v in os.environ.items() if k.upper() in _keys})
         script = root / "step.sh"
         script.write_text((_RECEIPTS if receipt else "") + gha.render(step["run"], ctx), encoding="utf-8")
         result = subprocess.run(
